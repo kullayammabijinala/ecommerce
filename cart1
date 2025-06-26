@@ -1,0 +1,324 @@
+<?php
+session_start();
+
+// Enable error reporting for debugging (REMOVE IN PRODUCTION)
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+
+// Adjust this path if your db.php is in a different location relative to cart.php
+// For example, if cart.php is in 'pages' folder and db.php in 'includes', it would be '../includes/db.php'
+// If cart.php is in the root, and db.php in 'includes', it would be './includes/db.php'
+include('../includes/db.php'); // Assuming db.php is in the same directory as cart.php's parent, or adjust path.
+
+// Check if user is logged in
+// (This is good practice for a cart, assuming user-specific carts)
+if (!isset($_SESSION['user_id'])) {
+    // Adjust this path to your login page
+    header('Location: ./pages/login.php'); // Example path: assuming login.php is in 'pages'
+    exit();
+}
+
+// Initialize cart session if not set
+if (!isset($_SESSION['cart1'])) {
+    $_SESSION['cart1'] = [];
+}
+
+// Handle Remove from Cart action via GET request
+if (isset($_GET['remove'])) {
+    $productIdToRemove = (int) $_GET['remove'];
+    if (isset($_SESSION['cart1'][$productIdToRemove])) {
+        unset($_SESSION['cart1'][$productIdToRemove]);
+        $_SESSION['status_message'] = [
+            'type' => 'success',
+            'text' => 'Product successfully removed from cart!'
+        ];
+    }
+    header("Location: cart1.php"); // Redirect back to cart page after removal
+    exit();
+}
+
+// Prepare data for displaying the cart
+$cartItems = [];
+$total = 0;
+
+// Only proceed if the cart is not empty
+if (!empty($_SESSION['cart'])) {
+    // Get the product IDs from the session cart
+    $productIdsInCart = array_keys($_SESSION['cart']);
+
+    // Create placeholders for the SQL IN clause (e.g., ?, ?, ?)
+    $placeholders = implode(',', array_fill(0, count($productIdsInCart), '?'));
+
+    try {
+        // Prepare a SQL statement to fetch all product details for items in the cart
+        $stmt = $conn->prepare("SELECT id, name, price, image_url FROM products WHERE id IN ($placeholders)");
+
+        // Execute the statement with the product IDs
+        $stmt->execute($productIdsInCart);
+
+        // Fetch all matching products
+        $productsFromDb = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Map database products to cart items, including quantities from session
+        foreach ($productsFromDb as $product) {
+            $quantity = $_SESSION['cart'][$product['id']];
+            
+            // Ensure quantity is positive
+            if ($quantity > 0) {
+                $product['quantity'] = $quantity;
+                $product['subtotal'] = $product['price'] * $quantity;
+                $cartItems[] = $product;
+                $total += $product['subtotal'];
+            } else {
+                // If quantity is somehow 0 or less, remove from cart session
+                unset($_SESSION['cart'][$product['id']]);
+            }
+        }
+    } catch (PDOException $e) {
+        // Log the error (do not display sensitive error details to users in production)
+        error_log("Database error fetching cart products: " . $e->getMessage());
+        $_SESSION['status_message'] = [
+            'type' => 'error',
+            'text' => 'An error occurred while loading your cart. Please try again.'
+        ];
+        // You might want to redirect to an error page or home
+        // header('Location: index.php'); exit();
+    }
+}
+?>
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Your Shopping Cart</title>
+    <style>
+        /* General Body and Container Styles */
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f0f2f5;
+            color: #333;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 20px auto;
+            padding: 20px;
+            background-color: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+        }
+
+        h2 {
+            color: #333;
+            border-bottom: 2px solid #eee;
+            padding-bottom: 15px;
+            margin-bottom: 25px;
+            text-align: center;
+            font-size: 2em;
+        }
+
+        a {
+            color: #007bff;
+            text-decoration: none;
+            transition: color 0.2s ease;
+        }
+
+        a:hover {
+            color: #0056b3;
+            text-decoration: underline;
+        }
+
+        .cart-navigation {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 25px;
+            padding-bottom: 15px;
+            border-bottom: 1px dashed #ddd;
+        }
+
+        .cart-navigation a {
+            padding: 8px 15px;
+            border: 1px solid #007bff;
+            border-radius: 5px;
+            background-color: #e7f3ff;
+        }
+
+        .cart-navigation a:hover {
+            background-color: #d0e7ff;
+            text-decoration: none;
+        }
+
+        /* Status Message */
+        .alert {
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            font-weight: bold;
+            text-align: center;
+            transition: opacity 0.5s ease-out;
+        }
+
+        .alert.success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .alert.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        /* Cart Table */
+        .cart-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        .cart-table th, .cart-table td {
+            border: 1px solid #ddd;
+            padding: 15px;
+            text-align: left;
+            vertical-align: middle;
+        }
+
+        .cart-table th {
+            background-color: #f8f8f8;
+            font-weight: 600;
+            color: #555;
+            text-transform: uppercase;
+            font-size: 0.9em;
+        }
+
+        .cart-table tr:nth-child(even) {
+            background-color: #fbfbfb;
+        }
+
+        .cart-table tr:hover {
+            background-color: #f0f0f0;
+        }
+
+        .cart-item-image {
+            width: 60px;
+            height: 60px;
+            object-fit: cover;
+            border-radius: 4px;
+            margin-right: 10px;
+            vertical-align: middle; /* Align image with text in cell */
+        }
+
+        .cart-item-name {
+            font-weight: bold;
+            color: #333;
+            display: inline-block; /* Allows image to be next to it */
+        }
+        
+        .cart-item-actions .remove-link {
+            color: #dc3545; /* Red for remove */
+            font-weight: bold;
+            padding: 5px 10px;
+            border: 1px solid #dc3545;
+            border-radius: 5px;
+            transition: background-color 0.2s ease, color 0.2s ease;
+        }
+
+        .cart-item-actions .remove-link:hover {
+            background-color: #dc3545;
+            color: white;
+            text-decoration: none;
+        }
+
+        /* Cart Summary */
+        .cart-summary {
+            margin-top: 30px;
+            padding: 25px;
+            background-color: #e9e9e9;
+            border-radius: 8px;
+            text-align: right;
+            box-shadow: inset 0 1px 5px rgba(0,0,0,0.05);
+        }
+
+        .cart-summary h3 {
+            margin: 0;
+            color: #333;
+            font-size: 1.8em;
+        }
+
+        .cart-summary span {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #28a745; /* Green for total price */
+        }
+
+        .empty-cart-message {
+            padding: 30px;
+            background-color: #fff;
+            border: 1px dashed #ccc;
+            text-align: center;
+            margin-top: 30px;
+            border-radius: 8px;
+            font-size: 1.2em;
+            color: #777;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Your Shopping Cart</h2>
+
+        <?php
+        // Display status messages from add_to_cart.php or other actions
+        if (isset($_SESSION['status_message'])) {
+            echo '<div class="alert ' . htmlspecialchars($_SESSION['status_message']['type']) . '">' . htmlspecialchars($_SESSION['status_message']['text']) . '</div>';
+            unset($_SESSION['status_message']); // Display once then remove
+        }
+        ?>
+
+        <div class="cart-navigation">
+            <a href="index.php">← Continue Shopping</a>
+            <a href="./pages/logout.php">Logout</a> </div>
+
+        <?php if (empty($cartItems)): ?>
+            <p class="empty-cart-message">Your cart is empty. Start adding some awesome products!</p>
+        <?php else: ?>
+            <table class="cart-table">
+                <thead>
+                    <tr>
+                        <th>Product</th>
+                        <th>Price (₹)</th>
+                        <th>Quantity</th>
+                        <th>Subtotal (₹)</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($cartItems as $item): ?>
+                        <tr>
+                            <td>
+                                <?php if (!empty($item['image_url'])): ?>
+                                    <img src="<?= htmlspecialchars($item['image_url']) ?>" alt="<?= htmlspecialchars($item['name']) ?>" class="cart-item-image">
+                                <?php endif; ?>
+                                <span class="cart-item-name"><?= htmlspecialchars($item['name']) ?></span>
+                            </td>
+                            <td><?= number_format($item['price'], 2) ?></td>
+                            <td><?= htmlspecialchars($item['quantity']) ?></td>
+                            <td><?= number_format($item['subtotal'], 2) ?></td>
+                            <td class="cart-item-actions">
+                                <a href="?remove=<?= htmlspecialchars($item['id']) ?>" class="remove-link">Remove</a>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+            <div class="cart-summary">
+                <h3>Total: <span>₹<?= number_format($total, 2) ?></span></h3>
+            </div>
+        <?php endif; ?>
+    </div>
+</body>
+</html>
